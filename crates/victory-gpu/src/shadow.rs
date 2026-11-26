@@ -26,13 +26,50 @@ use crate::watch::PAGE;
 
 fn merge_writeback(title: &mut [u8], host: &mut [u8], old: &[u8]) -> bool {
     let mut changed = 0;
-    for ((title_byte, host_byte), old_byte) in title.iter_mut().zip(host).zip(old) {
+
+    let mut t_chunks = title.chunks_exact_mut(8);
+    let mut h_chunks = host.chunks_exact_mut(8);
+    let mut o_chunks = old.chunks_exact(8);
+
+    for ((t_chunk, h_chunk), o_chunk) in t_chunks
+        .by_ref()
+        .zip(h_chunks.by_ref())
+        .zip(o_chunks.by_ref())
+    {
+        let o_word = u64::from_ne_bytes(o_chunk.try_into().unwrap());
+        let h_word = u64::from_ne_bytes((&*h_chunk).try_into().unwrap());
+        let t_word = u64::from_ne_bytes((&*t_chunk).try_into().unwrap());
+
+        // Fast path: if host == old, the GPU did not touch this 8-byte word.
+        if h_word == o_word {
+            if h_word != t_word {
+                h_chunk.copy_from_slice(t_chunk);
+            }
+            continue;
+        }
+
+        // At least one byte in this 8-byte word was altered by the GPU.
+        for i in 0..8 {
+            let mask = 0u8.wrapping_sub(u8::from(h_chunk[i] != o_chunk[i]));
+            let delta = (t_chunk[i] ^ h_chunk[i]) & mask;
+            t_chunk[i] ^= delta;
+            h_chunk[i] = t_chunk[i];
+            changed |= delta;
+        }
+    }
+
+    let t_rem = t_chunks.into_remainder();
+    let h_rem = h_chunks.into_remainder();
+    let o_rem = o_chunks.remainder();
+
+    for ((title_byte, host_byte), old_byte) in t_rem.iter_mut().zip(h_rem).zip(o_rem) {
         let mask = 0u8.wrapping_sub(u8::from(*host_byte != *old_byte));
         let delta = (*title_byte ^ *host_byte) & mask;
         *title_byte ^= delta;
         *host_byte = *title_byte;
         changed |= delta;
     }
+
     changed != 0
 }
 
