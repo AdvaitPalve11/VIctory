@@ -426,12 +426,12 @@ fn hardware_adapter() -> Option<IDXGIAdapter> {
                 DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
             ) {
                 i += 1;
-                if let Ok(desc) = adapter.GetDesc1() {
-                    if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 {
-                        let name = adapter_name(&desc.Description);
-                        tracing::info!(adapter = %name, "selected high-performance hardware adapter");
-                        return adapter.cast::<IDXGIAdapter>().ok();
-                    }
+                if let Ok(desc) = adapter.GetDesc1()
+                    && desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0
+                {
+                    let name = adapter_name(&desc.Description);
+                    tracing::info!(adapter = %name, "selected high-performance hardware adapter");
+                    return adapter.cast::<IDXGIAdapter>().ok();
                 }
             }
         }
@@ -441,16 +441,16 @@ fn hardware_adapter() -> Option<IDXGIAdapter> {
         let mut i = 0;
         while let Ok(adapter) = factory.EnumAdapters1(i) {
             i += 1;
-            if let Ok(desc) = adapter.GetDesc1() {
-                if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 {
-                    let vram = desc.DedicatedVideoMemory;
-                    let is_better = best
-                        .as_ref()
-                        .map_or(true, |(_, best_vram, _)| vram > *best_vram);
-                    if is_better {
-                        let name = adapter_name(&desc.Description);
-                        best = Some((adapter, vram, name));
-                    }
+            if let Ok(desc) = adapter.GetDesc1()
+                && desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0
+            {
+                let vram = desc.DedicatedVideoMemory;
+                let is_better = best
+                    .as_ref()
+                    .is_none_or(|(_, best_vram, _)| vram > *best_vram);
+                if is_better {
+                    let name = adapter_name(&desc.Description);
+                    best = Some((adapter, vram, name));
                 }
             }
         }
@@ -747,8 +747,8 @@ pub(crate) mod tests {
 
     #[test]
     fn hardware_adapter_selects_non_software() {
-        // SAFETY: hardware_adapter queries DXGI and returns an adapter if a hardware GPU exists.
         if let Some(adapter) = hardware_adapter() {
+            // SAFETY: hardware_adapter returns a valid DXGI adapter.
             let desc = unsafe { adapter.cast::<IDXGIAdapter1>().unwrap().GetDesc1().unwrap() };
             eprintln!(
                 "hardware_adapter: description={}, vendor={:#x}, flags={:#x}",
