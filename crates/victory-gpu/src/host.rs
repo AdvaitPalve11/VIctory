@@ -746,20 +746,43 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn hardware_adapter_selects_non_software() {
-        if let Some(adapter) = hardware_adapter() {
+    fn hardware_adapter_uses_the_named_adapter_or_selects_hardware() {
+        let named = std::env::var("VICTORY_D3D12_ADAPTER")
+            .ok()
+            .and_then(|filter| {
+                let filter = filter.to_lowercase();
+                // SAFETY: enumerate the names and LUIDs DXGI exposes to this process.
+                unsafe {
+                    let factory: IDXGIFactory4 =
+                        CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)).ok()?;
+                    (0..)
+                        .map_while(|i| factory.EnumAdapters1(i).ok())
+                        .filter_map(|adapter| adapter.GetDesc1().ok())
+                        .find(|desc| {
+                            adapter_name(&desc.Description)
+                                .to_lowercase()
+                                .contains(&filter)
+                        })
+                }
+            });
+        let selected = hardware_adapter().map(|adapter| {
             // SAFETY: hardware_adapter returns a valid DXGI adapter.
-            let desc = unsafe { adapter.cast::<IDXGIAdapter1>().unwrap().GetDesc1().unwrap() };
-            eprintln!(
-                "hardware_adapter: description={}, vendor={:#x}, flags={:#x}",
-                adapter_name(&desc.Description),
-                desc.VendorId,
-                desc.Flags
+            unsafe { adapter.cast::<IDXGIAdapter1>().unwrap().GetDesc1().unwrap() }
+        });
+
+        if let Some(expected) = named {
+            assert_eq!(
+                selected.map(|desc| desc.AdapterLuid),
+                Some(expected.AdapterLuid),
+                "explicitly requested adapter {}",
+                adapter_name(&expected.Description)
             );
+        } else if let Some(desc) = selected {
             assert_eq!(
                 desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32,
                 0,
-                "hardware_adapter must not select a software adapter"
+                "automatic selection returned {}",
+                adapter_name(&desc.Description)
             );
         }
     }
